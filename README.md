@@ -27,10 +27,11 @@ VIBE_GATEWAY_KEY=my-local-gateway-secret ./vibe init   # optional: fixes the gat
 ./vibe serve
 ```
 
-`init` asks for a vault password (or takes `VIBE_GATEWAY_PASSWORD`) and stores your
-gateway token in an encrypted vault. `key add mistral-vibe` imports the Mistral
-credential from `MISTRAL_API_KEY` (the key Vibe's browser sign-in creates), or asks
-for one. State lives in `~/.vibe-gateway`; nothing is sent anywhere except
+`init` creates the key store (`vault.json`, owner-only permissions); set
+`VIBE_GATEWAY_KEY` before `init` to pin the gateway token, otherwise one is
+generated. `key add mistral-vibe` imports the Mistral credential from
+`MISTRAL_API_KEY` (the key Vibe's browser sign-in creates), or asks for one.
+State lives in `~/.vibe-gateway`; nothing is sent anywhere except
 `api.mistral.ai`.
 
 ## Use
