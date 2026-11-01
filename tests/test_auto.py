@@ -96,7 +96,7 @@ def compile_fixture(binary, base):
     subprocess.run(['cc', '-std=c11', '-Os', '-Wall', '-Wextra', '-Wpedantic',
                     *shlex.split(env.get('BROKIE_TEST_SANITIZERS', '')), *cflags,
                     *['-D' + k + '=' + json.dumps(v) for k, v in definitions.items()],
-                    str(ROOT / 'brokie.c'), '-o', str(binary), *libs, '-lm', '-pthread'], check=True)
+                    str(ROOT / 'vibe.c'), '-o', str(binary), *libs, '-lm', '-pthread'], check=True)
 
 
 def main():
@@ -107,9 +107,9 @@ def main():
     upstream = ThreadingHTTPServer(('127.0.0.1', 0), Upstream)
     threading.Thread(target=upstream.serve_forever, daemon=True).start()
     base = f'http://127.0.0.1:{upstream.server_port}'
-    with tempfile.TemporaryDirectory(prefix='brokie-auto-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='vibe-auto-') as tmp:
         root = Path(tmp)
-        binary = root / 'brokie-fixture'
+        binary = root / 'vibe-fixture'
         compile_fixture(binary, base)
         folder = root / 'state'
         folder.mkdir()
@@ -125,12 +125,12 @@ def main():
                'keys': [dict(id=i + 1, provider=n, url=base + '/' + n + ('/chat/completions' if n not in ('native', 'anon') else ''),
                              native=n == 'native', anonymous=n == 'anon') for i, n in enumerate(names)]}
         (folder / 'config.json').write_text(json.dumps(cfg))
-        env = dict(os.environ, BROKIE_PASSWORD=password)
-        env.pop('BROKIE_OFFLINE', None)
+        env = dict(os.environ, VIBE_GATEWAY_PASSWORD=password)
+        env.pop('VIBE_GATEWAY_OFFLINE', None)
         def cli(*args, unlock=True, offline=False):
             child_env = dict(env)
-            if not unlock: child_env.pop('BROKIE_PASSWORD', None)
-            if offline: child_env['BROKIE_OFFLINE'] = '1'
+            if not unlock: child_env.pop('VIBE_GATEWAY_PASSWORD', None)
+            if offline: child_env['VIBE_GATEWAY_OFFLINE'] = '1'
             return subprocess.run([str(binary), '--dir', str(folder), *args], env=child_env,
                                   capture_output=True, text=True, check=True, timeout=20)
         def config(): return json.loads((folder / 'config.json').read_text())

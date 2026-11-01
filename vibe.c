@@ -1,8 +1,10 @@
-/* Brokie - MIT licensed. One C11 file; see README.md for build and protocol scope.
- * Based on FreeLLMAPI by Tashfeen Ahmed and inspired by UltimateWrap by Osama Hasoneh.
+/* Vibe gateway - MIT licensed. One C11 file; see README.md for build and protocol scope.
+ * Fork of Brokie by ykahalan (https://github.com/ykahalan/brokie), which is based on
+ * FreeLLMAPI by Tashfeen Ahmed and inspired by UltimateWrap by Osama Hasoneh.
  * https://github.com/tashfeenahmed/freellmapi
  * https://github.com/Osamious/ultimatewrap
- * Upstream MIT notices and code provenance: THIRD_PARTY_NOTICES.md and README.md.
+ * This fork targets Mistral's hosted API with a Vibe CLI credential; the routing core
+ * is unchanged from Brokie. Upstream MIT notices: THIRD_PARTY_NOTICES.md and README.md.
  */
 #define _POSIX_C_SOURCE 200809L
 #ifdef __APPLE__
@@ -51,7 +53,7 @@ typedef struct {
     size_t n, cap;
 } Buf;
 static void die(const char *s) {
-    fprintf(stderr, "brokie: %s\n", s);
+    fprintf(stderr, "vibe-gateway: %s\n", s);
     exit(1);
 }
 static void *mem(size_t n) {
@@ -443,11 +445,11 @@ static int hidden_input(const char *prompt, char *out, size_t cap) {
 static char password[512];
 static void unlock_password(int create) {
     if (password[0]) return;
-    const char *env = getenv("BROKIE_PASSWORD");
+    const char *env = getenv("VIBE_GATEWAY_PASSWORD");
     if (env && *env) {
         snprintf(password, sizeof(password), "%s", env);
-        unsetenv("BROKIE_PASSWORD");
-        if (strlen(password) < 12) die("BROKIE_PASSWORD must have at least 12 characters");
+        unsetenv("VIBE_GATEWAY_PASSWORD");
+        if (strlen(password) < 12) die("VIBE_GATEWAY_PASSWORD must have at least 12 characters");
         return;
     }
     if (!hidden_input(create ? "New vault password (12+ characters): " : "Vault password: ", password,
@@ -549,7 +551,7 @@ enum { H_UNKNOWN, H_OK, H_INVALID, H_REJECTED, H_LIMITED, H_DOWN, H_PUBLIC, H_AN
 static const char *health_names[] = {"unknown",     "healthy",    "invalid",   "rejected",    "limited",
                                      "unreachable", "unverified", "anonymous", "request-only"};
 static Buf config;
-static int offline(void) { return getenv("BROKIE_OFFLINE") && !strcmp(getenv("BROKIE_OFFLINE"), "1"); }
+static int offline(void) { return getenv("VIBE_GATEWAY_OFFLINE") && !strcmp(getenv("VIBE_GATEWAY_OFFLINE"), "1"); }
 static double cache_age(const char *name) {
     char path[4096];
     struct stat info;
@@ -563,7 +565,7 @@ static void save_health(void) {
         fmt(&b, "%s{\"id\":%d,\"health\":%d,\"http\":%d,\"checked\":%.0f}", k ? "," : "", keys[k].id, keys[k].health,
             keys[k].http, keys[k].checked);
     put(&b, "]\n");
-    if (!write_file("health.json", b.p, b.n)) fprintf(stderr, "brokie: could not save key health\n");
+    if (!write_file("health.json", b.p, b.n)) fprintf(stderr, "vibe-gateway: could not save key health\n");
     drop(&b);
 }
 static void load_health(void) {
@@ -694,7 +696,7 @@ static void save_state(void) {
             put(&b, "}");
         }
     put(&b, "]\n");
-    if (!write_file("stats.json", b.p, b.n)) fprintf(stderr, "brokie: could not save statistics\n");
+    if (!write_file("stats.json", b.p, b.n)) fprintf(stderr, "vibe-gateway: could not save statistics\n");
     drop(&b);
 }
 static int parse_models(Json *j, Model *out, int *count) {
@@ -740,7 +742,7 @@ static int parse_models(Json *j, Model *out, int *count) {
 }
 static void load_config(int need_vault) {
     config = read_file("config.json");
-    if (!config.p) die("run 'brokie init' first");
+    if (!config.p) die("run 'vibe init' first");
     Json j = json(config.p, config.n);
     if (j.bad || j.t[0].type != '{') die("invalid config.json");
     int v = get(&j, 0, "mode");
@@ -1107,7 +1109,7 @@ static int anthropic_response(Json *j, const char *requested, Buf *out) {
     int choice = at(j, get(j, 0, "choices"), 0), msg = get(j, choice, "message"), content = get(j, msg, "content"),
         calls = get(j, msg, "tool_calls"), count = 0;
     put(out, "{\"id\":");
-    raw(out, j, get(j, 0, "id"), "\"msg_brokie\"");
+    raw(out, j, get(j, 0, "id"), "\"msg_vibe\"");
     put(out, ",\"type\":\"message\",\"role\":\"assistant\",\"model\":");
     quote(out, requested);
     put(out, ",\"content\":[");
@@ -1128,7 +1130,7 @@ static int anthropic_response(Json *j, const char *requested, Buf *out) {
         }
         if (count++) put(out, ",");
         put(out, "{\"type\":\"tool_use\",\"id\":");
-        raw(out, j, get(j, t, "id"), "\"tool_brokie\"");
+        raw(out, j, get(j, t, "id"), "\"tool_vibe\"");
         put(out, ",\"name\":");
         raw(out, j, get(j, f, "name"), "\"\"");
         put(out, ",\"input\":");
@@ -1278,7 +1280,7 @@ static int fetch(Key *key, const char *url, const char *body, size_t n, Upstream
     }
     if (u->native && !strcmp(key->provider, "speechify")) h = curl_slist_append(h, "Speechify-Version: 2026-09-08");
     if (u->native && !strcmp(key->provider, "pinecone")) h = curl_slist_append(h, "X-Pinecone-Api-Version: 2026-07");
-    if (u->native && !strcmp(key->provider, "keenable")) h = curl_slist_append(h, "X-Keenable-Title: Brokie");
+    if (u->native && !strcmp(key->provider, "keenable")) h = curl_slist_append(h, "X-Keenable-Title: VibeGateway");
     curl_easy_setopt(c, CURLOPT_URL, url);
     curl_easy_setopt(c, CURLOPT_HTTPHEADER, h);
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 0L);
@@ -1286,7 +1288,7 @@ static int fetch(Key *key, const char *url, const char *body, size_t n, Upstream
     curl_easy_setopt(c, CURLOPT_TIMEOUT_MS, (long)(u->timeout ? u->timeout : timeout_ms));
     curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(c, CURLOPT_USERAGENT,
-                     !strcmp(key->provider, "routeway") ? "Mozilla/5.0 Brokie/0.1" : "Brokie/0.1");
+                     !strcmp(key->provider, "routeway") ? "Mozilla/5.0 VibeGateway/0.1" : "VibeGateway/0.1");
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, curl_body);
     curl_easy_setopt(c, CURLOPT_WRITEDATA, u);
     curl_easy_setopt(c, CURLOPT_HEADERFUNCTION, curl_header);
@@ -1326,7 +1328,7 @@ static int commit(Stream *s) {
     }
     if (!s->anthropic) return 1;
     Buf b = {0};
-    put(&b, "{\"type\":\"message_start\",\"message\":{\"id\":\"msg_brokie\",\"type\":\"message\",\"role\":"
+    put(&b, "{\"type\":\"message_start\",\"message\":{\"id\":\"msg_vibe\",\"type\":\"message\",\"role\":"
             "\"assistant\",\"model\":");
     quote(&b, s->requested);
     put(&b, ",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":0,"
@@ -1488,7 +1490,7 @@ static int finish_stream(Stream *s, int ok) {
         jfree(&args);
         fmt(&b,
             "{\"type\":\"content_block_start\",\"index\":%d,\"content_block\":{\"type\":\"tool_use\",\"id\":", index);
-        quote(&b, t->id.p ? t->id.p : "tool_brokie");
+        quote(&b, t->id.p ? t->id.p : "tool_vibe");
         put(&b, ",\"name\":");
         quote(&b, t->name.p);
         put(&b, ",\"input\":{}}}");
@@ -1592,7 +1594,7 @@ static void models_reply(Sock client) {
         if (i) put(&b, ",");
         put(&b, "{\"object\":\"model\",\"id\":");
         quote(&b, aliases[i]);
-        put(&b, ",\"owned_by\":\"brokie\"}");
+        put(&b, ",\"owned_by\":\"vibe-gateway\"}");
     }
     for (int i = 0; i < nm; i++)
         if (models[i].enabled) {
@@ -1966,7 +1968,7 @@ static void serve(void) {
     addr.sin_port = htons((uint16_t)port);
     if (bind(listener, (struct sockaddr *)&addr, sizeof(addr)) || listen(listener, 16))
         die("cannot bind loopback port (another instance may be running)");
-    fprintf(stderr, "Brokie listening at http://127.0.0.1:%d; %d models, %d keys; default %s\n", port, nm, nk,
+    fprintf(stderr, "Vibe gateway listening at http://127.0.0.1:%d; %d models, %d keys; default %s\n", port, nm, nk,
             default_mode);
     pthread_t updater;
     if (!offline()) {
@@ -2042,17 +2044,26 @@ static void initialize(void) {
     existing = read_file("config.json");
     if (existing.p) die("config already exists; refusing to replace it");
     if (!private_directory()) die("cannot create private state directory");
-    unsigned char random[32];
-    random_bytes(random, 32);
     Buf vault = {0};
-    put(&vault, "{\"token\":\"brokie_");
-    for (int i = 0; i < 32; i++) fmt(&vault, "%02x", random[i]);
-    put(&vault, "\",\"keys\":{}}");
+    const char *token = getenv("VIBE_GATEWAY_KEY");
+    put(&vault, "{\"token\":");
+    if (token && *token && strlen(token) >= 16 && !strpbrk(token, " \t\r\n\"")) {
+        quote(&vault, token);
+    } else {
+        unsigned char random[32];
+        random_bytes(random, 32);
+        put(&vault, "\"vibe_");
+        for (int i = 0; i < 32; i++) fmt(&vault, "%02x", random[i]);
+        put(&vault, "\"");
+    }
+    put(&vault, ",\"keys\":{}}");
     if (!vault_write(&vault, 1)) die("cannot create vault");
     secure_zero(vault.p, vault.n);
     drop(&vault);
-    const char *initial = "{\n  \"port\":31817, \"mode\":\"smartest\", \"timeout_ms\":60000, \"max_attempts\":6, "
-                          "\"sticky_seconds\":1800,\n  \"keys\":[], \"models\":[]\n}\n";
+    const char *initial = "{\n  \"port\":8787, \"mode\":\"smartest\", \"timeout_ms\":60000, \"max_attempts\":6, "
+                          "\"sticky_seconds\":1800,\n  \"keys\": [], "
+                          "\"models\": [{\"id\":1, \"provider\":\"mistral-vibe\", \"model\":\"mistral-vibe-cli-latest\", "
+                          "\"tools\":true, \"key_id\":1, \"rank\":1, \"tier\":1}]\n}\n";
     if (!write_file("config.json", initial, strlen(initial))) die("cannot create config");
     puts("Initialized private configuration and encrypted vault.");
 }
@@ -2135,6 +2146,7 @@ static const Provider providers[] = {
     {"longcat", "https://api.longcat.chat/openai/v1", "https://longcat.chat/platform", "/models", 0, 0},
     {"lucidity", "https://composite.lucidity.sh/v1", "https://composite.lucidity.sh", "/models", 0, 0},
     {"mistral", "https://api.mistral.ai/v1", "https://console.mistral.ai/api-keys/", "/models", 0, 0},
+    {"mistral-vibe", "https://api.mistral.ai/v1", "https://console.mistral.ai/api-keys/", "/models", 0, 0},
     {"modelscope", "https://api-inference.modelscope.cn/v1", "https://modelscope.cn/my/myaccesstoken", "-", 0, 0},
     {"moondream", "https://api.moondream.ai/v1", "https://moondream.ai/c/cloud/api-keys", "/models", 0, 0},
     {"nara", "https://router.bynara.id/v1", "https://router.bynara.id", "/models", 0, 0},
@@ -2260,8 +2272,8 @@ static void provider_refresh(int force) {
     if (fetch(&anonymous, BROKIE_PROVIDERS_URL, NULL, 0, &up) && up.status == 200 && up.body.p &&
         provider_load(&up.body)) {
         if (!private_directory() || !write_file("providers.json", up.body.p, up.body.n))
-            fprintf(stderr, "brokie: could not cache provider directory\n");
-    } else fprintf(stderr, "brokie: provider refresh failed; keeping cached/bundled defaults\n");
+            fprintf(stderr, "vibe-gateway: could not cache provider directory\n");
+    } else fprintf(stderr, "vibe-gateway: provider refresh failed; keeping cached/bundled defaults\n");
     drop(&up.body);
 }
 static const char *key_probe(Key *key) {
@@ -2353,7 +2365,7 @@ static void provider_list(void) {
         if (!provider_find(id))
             printf("%-16s new catalog provider: %s; add its documented BASE_URL manually\n", id, name);
     }
-    puts("Add: brokie key add PROVIDER [--anonymous]. Native: /native/PROVIDER/PATH. Details: PROVIDERS.md");
+    puts("Add: vibe key add PROVIDER [--anonymous]. Native: /native/PROVIDER/PATH. Details: PROVIDERS.md");
     jfree(&cat);
     jfree(&local);
     drop(&catalog);
@@ -2370,7 +2382,7 @@ static void usage_stats(void) {
                    s.day_tokens, s.month_tokens);
         }
 }
-static void add_key(const char *provider, const char *base, int anonymous, int native) {
+static void add_key(const char *provider, const char *base, int anonymous, int native, const char *from_env) {
     if (nk >= MAX_KEYS) die("key limit reached");
     Key k = {0};
     k.id = 1;
@@ -2382,7 +2394,11 @@ static void add_key(const char *provider, const char *base, int anonymous, int n
     if (!native && !strstr(k.url, "/chat/completions"))
         strncat(k.url, "/chat/completions", sizeof(k.url) - strlen(k.url) - 1);
     if (!safe_url(k.url)) die("use HTTPS, or HTTP on localhost for local models");
-    if (!anonymous && !hidden_input("Provider API key (hidden): ", k.secret, sizeof(k.secret))) die("API key required");
+    if (!anonymous) {
+        const char *imported = from_env ? getenv(from_env) : NULL;
+        if (imported && *imported) snprintf(k.secret, sizeof(k.secret), "%s", imported);
+        else if (!hidden_input("Provider API key (hidden): ", k.secret, sizeof(k.secret))) die("API key required");
+    }
     if (strpbrk(k.secret, "\r\n")) die("invalid key");
     write_vault_property(NULL, k.secret, k.id);
     secure_zero(k.secret, sizeof(k.secret));
@@ -2637,7 +2653,7 @@ static int sync_catalog(int live) {
         config = next;
         memset(&next, 0, sizeof(next));
     }
-    if (!write_file("catalog.json", up.body.p, up.body.n)) fprintf(stderr, "brokie: catalog cache write failed\n");
+    if (!write_file("catalog.json", up.body.p, up.body.n)) fprintf(stderr, "vibe-gateway: catalog cache write failed\n");
     fprintf(stderr, "Applied signed catalog %s (%d chat models)%s.\n", version, count, live ? " to live router" : "");
     ok = 1;
 done:
@@ -2646,7 +2662,7 @@ done:
         pthread_cond_broadcast(&idle);
         UNLOCK();
     }
-    if (!ok) fprintf(stderr, "brokie: catalog refresh failed; keeping existing routing data\n");
+    if (!ok) fprintf(stderr, "vibe-gateway: catalog refresh failed; keeping existing routing data\n");
     free(next_models);
     free(next_stats);
     jfree(&remote);
@@ -2667,7 +2683,7 @@ static void *automatic_refresh(void *unused) {
             provider_refresh(0);
             next_providers = now_s() + 3600;
         }
-        if (refresh_seconds && now >= next_catalog) {
+        if (refresh_seconds && nm && now >= next_catalog) {
             int ok = sync_catalog(1);
             next_catalog = now_s() + (ok ? refresh_seconds : fmin(300, refresh_seconds));
         }
@@ -2681,7 +2697,7 @@ static void *automatic_refresh(void *unused) {
 }
 int main(int argc, char **argv) {
     const char *home = getenv("HOME");
-    snprintf(directory, sizeof(directory), "%s/.brokie", home ? home : ".");
+    snprintf(directory, sizeof(directory), "%s/.vibe-gateway", home ? home : ".");
     int p = 1;
     if (argc > 3 && !strcmp(argv[p], "--dir")) {
         snprintf(directory, sizeof(directory), "%s", argv[p + 1]);
@@ -2689,8 +2705,8 @@ int main(int argc, char **argv) {
     }
     if (p >= argc) {
         puts(
-            "brokie [--dir DIR] init | providers | stats | health | check | serve | list [MODE] | mode MODE | key add PROVIDER [BASE_URL] "
-            "[--anonymous] [--native] | model add PROVIDER MODEL | sync | license | claude [MODE] "
+            "vibe [--dir DIR] init | providers | stats | health | check | serve | list [MODE] | mode MODE | key add PROVIDER [BASE_URL] "
+            "[--anonymous] [--native] [--env VAR] | model add PROVIDER MODEL | sync | license | claude [MODE] "
             "| run CLIENT [MODE]");
         return 0;
     }
@@ -2726,9 +2742,11 @@ int main(int argc, char **argv) {
         int next = p + 2, anonymous = 0, native = preset && preset->native;
         const char *base = next < argc && strncmp(argv[next], "--", 2) ? argv[next++] : preset ? preset->url : NULL;
         if (!base) die("unknown provider; supply its API BASE_URL");
+        const char *from_env = NULL;
         for (int i = next; i < argc; i++) {
             if (!strcmp(argv[i], "--anonymous")) anonymous = 1;
             else if (!strcmp(argv[i], "--native")) native = 1;
+            else if (!strcmp(argv[i], "--env") && i + 1 < argc) from_env = argv[++i];
             else die("unknown key option");
         }
         char expanded[2048], account[96];
@@ -2740,7 +2758,7 @@ int main(int argc, char **argv) {
             snprintf(expanded, sizeof(expanded), "%.*s%s%s", (int)(marker - base), base, account, marker + 15);
             base = expanded;
         }
-        add_key(argv[p + 1], base, anonymous, native);
+        add_key(argv[p + 1], base, anonymous, native, from_env);
     } else if (!strcmp(cmd, "model") && p + 2 < argc && !strcmp(argv[p], "add")) add_model(argv[p + 1], argv[p + 2]);
     else if (!strcmp(cmd, "sync")) {
         provider_refresh(1);
@@ -2756,7 +2774,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(cmd, "run") && p < argc)
         launch_client(argv[p], p + 1 < argc ? argv[p + 1] : default_mode, p + 2 < argc ? argc - p - 2 : 0,
                       argv + p + 2);
-    else die("unknown or incomplete command; run brokie without arguments for usage");
+    else die("unknown or incomplete command; run vibe without arguments for usage");
     secure_zero(keys, sizeof(keys));
     secure_zero(auth_token, sizeof(auth_token));
     secure_zero(password, sizeof(password));

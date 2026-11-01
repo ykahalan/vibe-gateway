@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARY = Path(os.environ.get('BROKIE_BINARY', ROOT / 'brokie'))
+BINARY = Path(os.environ.get('VIBE_GATEWAY_BINARY', ROOT / 'vibe'))
 calls = []
 
 class Upstream(BaseHTTPRequestHandler):
@@ -100,7 +100,7 @@ def main():
     def check(name, condition):
         assert condition, name
         checked.append(name)
-    with tempfile.TemporaryDirectory(prefix='brokie-test-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='vibe-test-') as tmp:
         folder = Path(tmp)
         password = vault(folder)
         p = port()
@@ -110,7 +110,7 @@ def main():
             {'id': 3, 'provider': 'mock', 'model': 'vision', 'tier': 2, 'rank': 3, 'vision': True},
         ]}
         (folder / 'config.json').write_text(json.dumps(cfg))
-        env = dict(os.environ, BROKIE_PASSWORD=password, BROKIE_OFFLINE='1')
+        env = dict(os.environ, VIBE_GATEWAY_PASSWORD=password, VIBE_GATEWAY_OFFLINE='1')
         with (folder / 'log').open('w+') as log:
             proc = subprocess.Popen([str(BINARY), '--dir', str(folder), 'serve'], env=env, stdout=log, stderr=log)
             try:
@@ -188,18 +188,18 @@ def main():
                     proc.wait(timeout=5)
     upstream.shutdown()
     # A fresh setup uses only the shipped C executable: no migration helper.
-    with tempfile.TemporaryDirectory(prefix='brokie-fresh-') as tmp:
-        env = dict(os.environ, BROKIE_PASSWORD='fresh-fixture-password-123', BROKIE_OFFLINE='1')
+    with tempfile.TemporaryDirectory(prefix='vibe-fresh-') as tmp:
+        env = dict(os.environ, VIBE_GATEWAY_PASSWORD='fresh-fixture-password-123', VIBE_GATEWAY_OFFLINE='1')
         def cli(*args, input=None, check_code=True):
             return subprocess.run([str(BINARY), '--dir', tmp, *args], env=env, input=input, capture_output=True, text=True, check=check_code)
         cli('init')
         cli('key', 'add', 'local', 'http://127.0.0.1:9999/v1', input='fixture-provider-secret\n')
         cli('model', 'add', 'local', 'fixture-model')
         cfg = json.loads((Path(tmp) / 'config.json').read_text())
-        check('from-scratch setup', len(cfg['keys']) == 1 and len(cfg['models']) == 1)
+        check('from-scratch setup', len(cfg['keys']) == 1 and len(cfg['models']) == 2 and cfg['models'][0]['provider'] == 'mistral-vibe')
         blob = (Path(tmp) / 'vault.bin').read_bytes()
         check('credentials encrypted on disk', b'fixture-provider-secret' not in blob and 'fixture-provider-secret' not in json.dumps(cfg))
-        child = cli('run', 'python3', 'fastest', '-c', 'import os,json,re;print(json.dumps({"model":os.environ["OPENAI_MODEL"],"base":os.environ["OPENAI_BASE_URL"],"has_key":bool(re.fullmatch(r"brokie_[0-9a-f]{64}",os.environ["OPENAI_API_KEY"]))}))')
+        child = cli('run', 'python3', 'fastest', '-c', 'import os,json,re;print(json.dumps({"model":os.environ["OPENAI_MODEL"],"base":os.environ["OPENAI_BASE_URL"],"has_key":bool(re.fullmatch(r"vibe_[0-9a-f]{64}",os.environ["OPENAI_API_KEY"]))}))')
         info = json.loads(child.stdout)
         check('OpenAI client launch and argument forwarding', info['model'] == 'auto:fastest' and info['has_key'] and info['base'].endswith('/v1'))
         original = (Path(tmp) / 'vault.bin').read_bytes()

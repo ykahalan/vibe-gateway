@@ -41,15 +41,15 @@ def main():
         checked.append(name)
     upstream = ThreadingHTTPServer(('127.0.0.1', 0), Upstream)
     threading.Thread(target=upstream.serve_forever, daemon=True).start()
-    with tempfile.TemporaryDirectory(prefix='brokie-native-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='vibe-native-') as tmp:
         folder, gateway = Path(tmp), port()
         names = ['exa', 'parallel', 'keenable', 'brave', 'google', 'speechify', 'mock', 'aihorde', 'pinecone', 'compat']
         password = vault(folder, {str(i + 1): 'fixture-native-secret' for i in range(len(names) + 1)})
-        env = dict(os.environ, BROKIE_PASSWORD=password, BROKIE_OFFLINE='1')
+        env = dict(os.environ, VIBE_GATEWAY_PASSWORD=password, VIBE_GATEWAY_OFFLINE='1')
         (folder / 'providers.json').write_bytes((Path(__file__).resolve().parents[1] / 'providers.json').read_bytes())
         def cli(*args, input=None, metadata_only=False):
             child_env = dict(env)
-            if metadata_only: child_env.pop('BROKIE_PASSWORD', None)
+            if metadata_only: child_env.pop('VIBE_GATEWAY_PASSWORD', None)
             return subprocess.run([str(BINARY), '--dir', tmp, *args], input=input, text=True,
                                   capture_output=True, check=True, env=child_env, timeout=10)
         directory = cli('providers', metadata_only=True).stdout
@@ -104,7 +104,7 @@ def main():
             request('/native/compat/events')
             check('existing chat keys support native paths', calls[-1][1] == '/api/events')
             request('/native/keenable/search/public', b'{"query":"test"}')
-            check('Keenable application header', calls[-1][2].get('X-Keenable-Title') == 'Brokie')
+            check('Keenable application header', calls[-1][2].get('X-Keenable-Title') == 'VibeGateway')
             request('/native/speechify/audio', b'{"input":"test"}')
             check('Speechify version header', calls[-1][2].get('Speechify-Version') == '2026-09-08')
             request('/native/aihorde/models')

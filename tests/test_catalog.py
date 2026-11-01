@@ -6,9 +6,9 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARY = ROOT / 'brokie'
-with tempfile.TemporaryDirectory(prefix='brokie-catalog-') as tmp:
-    env = dict(os.environ, BROKIE_PASSWORD='fixture-password-only-for-tests')
+BINARY = ROOT / 'vibe'
+with tempfile.TemporaryDirectory(prefix='vibe-catalog-') as tmp:
+    env = dict(os.environ, VIBE_GATEWAY_PASSWORD='fixture-password-only-for-tests')
     def run(*args):
         return subprocess.run([str(BINARY), '--dir', tmp, *args], env=env, check=True, capture_output=True, text=True)
     run('init')

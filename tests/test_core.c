@@ -1,5 +1,5 @@
-#define main brokie_cli_main
-#include "../brokie.c"
+#define main vibe_cli_main
+#include "../vibe.c"
 #undef main
 
 int main(void) {
