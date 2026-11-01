@@ -26,8 +26,8 @@ jobs:
       - run: sh build.sh
       - name: Parser, scoring and health unit checks
         run: |
-          sh build.sh tests/test_core.c "$RUNNER_TEMP/brokie-core-test"
-          "$RUNNER_TEMP/brokie-core-test"
+          sh build.sh tests/test_core.c "$RUNNER_TEMP/vibe-core-test"
+          "$RUNNER_TEMP/vibe-core-test"
       - name: Offline protocol and fresh-setup checks
         run: |
           python -m venv .venv
