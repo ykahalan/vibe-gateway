@@ -476,18 +476,11 @@ static Stats *stats;
 static int nk, nm, port = 31817, max_attempts = 6, timeout_ms = 60000, sticky_seconds = 1800;
 static int refresh_seconds = 3600, health_seconds = 900;
 static char default_mode[32] = "smartest", auth_token[4096];
-static char catalog_license[4096];
 enum { H_UNKNOWN, H_OK, H_INVALID, H_REJECTED, H_LIMITED, H_DOWN, H_PUBLIC, H_ANONYMOUS, H_SKIP };
 static const char *health_names[] = {"unknown",     "healthy",    "invalid",   "rejected",    "limited",
                                      "unreachable", "unverified", "anonymous", "request-only"};
 static Buf config;
 static int offline(void) { return getenv("VIBE_GATEWAY_OFFLINE") && !strcmp(getenv("VIBE_GATEWAY_OFFLINE"), "1"); }
-static double cache_age(const char *name) {
-    char path[4096];
-    struct stat info;
-    path_for(path, sizeof(path), name);
-    return stat(path, &info) ? 1e30 : fmax(0, (double)time(NULL) - info.st_mtime);
-}
 static void save_health(void) {
     Buf b = {0};
     put(&b, "[");
@@ -706,7 +699,6 @@ static void load_config(int need_vault) {
         Json vj = json(vlt.p, vlt.n);
         if (vj.bad) die("damaged vault or invalid key store");
         fieldstr(&vj, 0, "token", auth_token, sizeof(auth_token));
-        fieldstr(&vj, 0, "catalog_license", catalog_license, sizeof(catalog_license));
         int ka = get(&vj, 0, "keys");
         for (int i = 0; i < nk; i++) {
             char id[32];
@@ -1457,7 +1449,6 @@ static void free_stream(Stream *s) {
 /* The HTTP listener is loopback-only. At most 16 worker threads hold requests. */
 static int active_clients, updating;
 static void *automatic_refresh(void *unused);
-static int sync_catalog(int live);
 static int same_secret(const char *a, const char *b) {
     size_t an = strlen(a), bn = strlen(b);
     unsigned diff = (unsigned)(an ^ bn);
@@ -1887,7 +1878,6 @@ done:
 }
 static void serve(void) {
     signal(SIGPIPE, SIG_IGN);
-    if (!offline() && refresh_seconds && !nm) sync_catalog(1);
     Sock listener = socket(AF_INET, SOCK_STREAM, 0);
     if (listener == BAD_SOCKET) die("socket failed");
     int one = 1;
@@ -2038,180 +2028,15 @@ typedef struct {
     const char *id, *url, *signup, *probe;
     int native, anonymous;
 } Provider;
-/* Provider metadata from FreeLLMAPI; API keys never belong here. See PROVIDERS.md. */
-// clang-format off
+/* The Vibe gateway serves exactly one provider: Mistral's hosted API with a
+ * Vibe CLI credential. API keys never belong here. */
 static const Provider providers[] = {
-    {"aclide", "https://aclide.com/v1", "https://aclide.com/en/dashboard/api-keys", "-", 1, 0},
-    {"agnes", "https://apihub.agnes-ai.com/v1", "https://platform.agnes-ai.com", "/models", 0, 0},
-    {"aihorde", "https://oai.aihorde.net/v1", "https://aihorde.net/register", "-", 1, 1},
-    {"ainative", "https://api.ainative.studio/api/v1", "https://ainative.studio", "/models", 0, 0},
-    {"aion", "https://api.aionlabs.ai/v1", "https://www.aionlabs.ai", "/models", 0, 0},
-    {"airforce", "https://api.airforce/v1", "https://api.airforce", "/models", 0, 0},
-    {"anyapi", "https://api.anyapi.ai/v1", "https://anyapi.ai", "/models", 0, 0},
-    {"apinex", "https://api.apinex.bond/v1", "https://apinex.bond/keys", "/models", 0, 0},
-    {"bai", "https://api.b.ai/v1", "https://b.ai", "/models", 0, 0},
-    {"bazaarlink", "https://bazaarlink.ai/api/v1", "https://bazaarlink.ai", "/models", 0, 0},
-    {"beatapi", "https://api.beatapi.io/v1", "https://beatapi.io", "/models", 0, 0},
-    {"blaze", "https://api.blazeapi.org/paid/v1", "https://blazeapi.org/dashboard", "/models", 0, 0},
-    {"blockrun", "https://api.blockrun.ai/v1", "https://user.blockrun.ai/dashboard/keys", "/account", 0, 0},
-    {"brave", "https://api.search.brave.com/res/v1", "https://api-dashboard.search.brave.com", "-", 1, 0},
-    {"cerebras", "https://api.cerebras.ai/v1", "https://cloud.cerebras.ai", "/models", 0, 0},
-    {"clod", "https://api.clod.io/v1", "https://app.clod.io", "/models", 0, 0},
-    {"cloudflare", "https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/v1", "https://dash.cloudflare.com", "/models", 0, 0},
-    {"cohere", "https://api.cohere.ai/compatibility/v1", "https://dashboard.cohere.com/api-keys", "/models", 0, 0},
-    {"dreamprompting", "https://dreamprompting.com/api/v1", "https://dreamprompting.com", "/models", 0, 0},
-    {"electronhub", "https://api.electronhub.ai/v1", "https://app.electronhub.ai", "/user/me", 0, 0},
-    {"exa", "https://api.exa.ai", "https://dashboard.exa.ai/api-keys", "-", 1, 0},
-    {"experiential", "https://api.experientiallabs.ai/v1", "https://platform.experientiallabs.ai", "/models", 0, 0},
-    {"firecrawl", "https://api.firecrawl.dev/v2", "https://www.firecrawl.dev/app/api-keys", "/team/credit-usage", 1, 0},
-    {"freeai", "https://api.free.ai", "https://free.ai/account/#api-keys", "-", 1, 0},
-    {"gizmo", "https://api.gizmoplatforms.com/api/v1", "https://gizmoplatforms.com/developers", "/models", 0, 0},
-    {"google", "https://generativelanguage.googleapis.com/v1beta/openai", "https://aistudio.google.com/apikey", "/models", 0, 0},
-    {"groq", "https://api.groq.com/openai/v1", "https://console.groq.com/keys", "/models", 0, 0},
-    {"huggingface", "https://router.huggingface.co/v1", "https://huggingface.co/settings/tokens", "/models", 0, 0},
-    {"inferbase", "https://api.inferbase.ai/v1", "https://inferbase.ai", "//api/v1/inference/credits", 0, 0},
-    {"iteracompute", "https://api.iteracompute.com/v1", "https://iteracompute.com/free/", "-", 0, 0},
-    {"jamai", "https://api.jamaibase.com/api/v1", "https://cloud.jamaibase.com", "/models", 0, 0},
-    {"keenable", "https://api.keenable.ai/v1", "https://app.keenable.ai", "-", 1, 1},
-    {"kenari", "https://kenari.id/v1", "https://kenari.id", "/account/balance", 0, 0},
-    {"kilo", "https://api.kilo.ai/api/gateway/v1", "https://app.kilo.ai", "/models", 0, 1},
-    {"kiosapi", "https://api.kiosapi.id/v1", "https://kiosapi.id/dashboard/keys", "-", 0, 0},
-    {"linkup", "https://api.linkup.so/v1", "https://app.linkup.so", "/credits/balance", 1, 0},
-    {"llm7", "https://api.llm7.io/v1", "https://llm7.io", "/models", 0, 0},
-    {"llmtr", "https://llmtr.com/v1", "https://llmtr.com", "-", 0, 0},
-    {"logfare", "https://logfare.ai/v1", "https://logfare.ai", "/models", 0, 0},
-    {"longcat", "https://api.longcat.chat/openai/v1", "https://longcat.chat/platform", "/models", 0, 0},
-    {"lucidity", "https://composite.lucidity.sh/v1", "https://composite.lucidity.sh", "/models", 0, 0},
-    {"mistral", "https://api.mistral.ai/v1", "https://console.mistral.ai/api-keys/", "/models", 0, 0},
     {"mistral-vibe", "https://api.mistral.ai/v1", "https://console.mistral.ai/api-keys/", "/models", 0, 0},
-    {"modelscope", "https://api-inference.modelscope.cn/v1", "https://modelscope.cn/my/myaccesstoken", "-", 0, 0},
-    {"moondream", "https://api.moondream.ai/v1", "https://moondream.ai/c/cloud/api-keys", "/models", 0, 0},
-    {"nara", "https://router.bynara.id/v1", "https://router.bynara.id", "/models", 0, 0},
-    {"navy", "https://api.navy/v1", "https://api.navy", "/models", 0, 0},
-    {"nvidia", "https://integrate.api.nvidia.com/v1", "https://build.nvidia.com/settings/api-keys", "/models", 0, 0},
-    {"ollama", "https://ollama.com/v1", "https://ollama.com/settings/keys", "/models", 0, 0},
-    {"onomeo", "https://onomeo.com/v1", "https://onomeo.com/dashboard", "/models", 0, 0},
-    {"opencode", "https://opencode.ai/zen/v1", "https://opencode.ai/auth", "/models", 0, 0},
-    {"openrouter", "https://openrouter.ai/api/v1", "https://openrouter.ai/keys", "/models", 0, 0},
-    {"orcarouter", "https://api.orcarouter.ai/v1", "https://www.orcarouter.ai", "/models", 0, 0},
-    {"ovh", "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1", "https://endpoints.ai.cloud.ovh.net", "/models", 0, 1},
-    {"parallel", "https://api.parallel.ai/v1", "https://platform.parallel.ai", "-", 1, 0},
-    {"pinecone", "https://api.pinecone.io", "https://app.pinecone.io", "-", 1, 0},
-    {"plugsky", "https://plugsky.com/v1", "https://plugsky.com/dashboard", "/models", 0, 0},
-    {"pollinations", "https://gen.pollinations.ai/v1", "https://enter.pollinations.ai", "/models", 0, 0},
-    {"qianfan", "https://qianfan.baidubce.com/v2", "https://console.bce.baidu.com/qianfan/overview", "/models", 0, 0},
-    {"radeon", "https://developer.amd.com.cn/radeon/api/v1", "https://developer.amd.com.cn/radeon/tokenfactory", "/models", 0, 0},
-    {"reka", "https://api.reka.ai/v1", "https://platform.reka.ai", "/models", 0, 0},
-    {"requesty", "https://router.requesty.ai/v1", "https://www.requesty.ai", "/models", 0, 0},
-    {"router9", "https://api.router9.com/v1", "https://www.router9.com", "/models", 0, 0},
-    {"routeway", "https://api.routeway.ai/v1", "https://routeway.ai", "/models", 0, 0},
-    {"sail", "https://api.sailresearch.com/v1", "https://app.sailresearch.com", "-", 1, 0},
-    {"sealion", "https://api.sea-lion.ai/v1", "https://sea-lion.ai", "/models", 0, 0},
-    {"septor", "https://api.septorlabs.com/v1", "https://septorlabs.com/dashboard", "/models", 0, 0},
-    {"serpsearch", "https://api.serpsearch.com/api/v1", "https://serpsearch.com", "-", 1, 0},
-    {"siliconflow", "https://api.siliconflow.com/v1", "https://siliconflow.com", "/models", 0, 0},
-    {"simplellm", "https://api.simplellm.eu/v1", "https://app.simplellm.eu", "/rate-limit", 0, 0},
-    {"speechify", "https://api.speechify.ai/v1", "https://platform.speechify.ai", "/workspaces/current/entitlements", 1, 0},
-    {"speka", "https://speka.me/v1", "https://speka.me/dashboard/keys", "/models", 0, 0},
-    {"tavily", "https://api.tavily.com", "https://app.tavily.com", "/usage", 1, 0},
-    {"typhoon", "https://api.opentyphoon.ai/v1", "https://playground.opentyphoon.ai", "/models", 0, 0},
-    {"unorouter", "https://api.unorouter.com/v1", "https://unorouter.com", "/models", 0, 0},
-    {"volcengine", "https://ark.cn-beijing.volces.com/api/v3", "https://console.volcengine.com/ark", "/models", 0, 0},
-    {"waterfall", "https://api.getwaterfall.org/v1", "https://getwaterfall.org", "/models", 0, 0},
-    {"xfyun", "https://spark-api-open.xf-yun.com/v1", "https://console.xfyun.cn", "/models", 0, 0},
-    {"xkiro", "https://api.xkiro.com/v1", "https://xkiro.com", "/usage", 0, 0},
-    {"zhipu", "https://api.z.ai/api/paas/v4", "https://z.ai/manage-apikey/apikey-list", "/models", 0, 0}
 };
-// clang-format on
-static Provider registry[256];
-static unsigned char registry_owned[256];
-static int nregistry;
-static void provider_defaults(void) {
-    if (nregistry) return;
-    memcpy(registry, providers, sizeof(providers));
-    nregistry = (int)(sizeof(providers) / sizeof(*providers));
-}
 static const Provider *provider_find(const char *id) {
-    provider_defaults();
-    for (int i = 0; i < nregistry; i++)
-        if (!strcmp(registry[i].id, id)) return &registry[i];
+    for (size_t i = 0; i < sizeof(providers) / sizeof(*providers); i++)
+        if (!strcmp(providers[i].id, id)) return &providers[i];
     return NULL;
-}
-static void provider_free(Provider *rows, unsigned char *owned, int count) {
-    for (int i = 0; i < count; i++)
-        if (owned[i]) {
-            free((void *)rows[i].id);
-            free((void *)rows[i].url);
-            free((void *)rows[i].signup);
-            free((void *)rows[i].probe);
-        }
-}
-static int provider_load(Buf *data) {
-    Json j = json(data->p, data->n);
-    if (j.bad || !j.n || j.t[0].type != '{') {
-        jfree(&j);
-        return 0;
-    }
-    int arr = get(&j, 0, "providers"), ok = 0;
-    Provider next[256] = {0};
-    unsigned char owned[256] = {0};
-    memcpy(next, providers, sizeof(providers));
-    int count = (int)(sizeof(providers) / sizeof(*providers));
-    if (arr < 0 || j.t[arr].type != '[' || !j.t[arr].n || j.t[arr].n > 256) goto done;
-    for (int q = 0; q < j.t[arr].n; q++) {
-        int row = at(&j, arr, q);
-        char *id = string(&j, get(&j, row, "id")), *url = string(&j, get(&j, row, "url")),
-             *signup = string(&j, get(&j, row, "signup"));
-        int slot = 0;
-        while (slot < count && strcmp(next[slot].id, id)) slot++;
-        int nt = get(&j, row, "native"), an = get(&j, row, "anonymous"), hp = get(&j, row, "health_path");
-        char *probe = hp >= 0 ? string(&j, hp) : slot < count && next[slot].probe ? strdup(next[slot].probe) : NULL;
-        int valid = (nt < 0 || j.t[nt].type == 't' || j.t[nt].type == 'f') &&
-                    (an < 0 || j.t[an].type == 't' || j.t[an].type == 'f') && (hp < 0 || j.t[hp].type == '"') &&
-                    id[0] && strlen(id) < 96 && strspn(id, "abcdefghijklmnopqrstuvwxyz0123456789_-") == strlen(id) &&
-                    !strncmp(url, "https://", 8) && strlen(url) < 2048 && !strpbrk(url, "\r\n ") &&
-                    !strncmp(signup, "https://", 8) && strlen(signup) < 2048 && !strpbrk(signup, "\r\n ") &&
-                    (!probe || (strlen(probe) < 256 && (!probe[0] || probe[0] == '/' || !strcmp(probe, "-")) &&
-                                !strstr(probe, "://") && !strpbrk(probe, "\r\n"))) &&
-                    slot < 256 && !owned[slot];
-        if (!valid) {
-            free(id);
-            free(url);
-            free(signup);
-            free(probe);
-            goto done;
-        }
-        if (slot == count) count++;
-        next[slot] = (Provider){id, url, signup, probe, boolean(&j, nt, 0), boolean(&j, an, 0)};
-        owned[slot] = 1;
-    }
-    provider_free(registry, registry_owned, nregistry);
-    memcpy(registry, next, sizeof(next));
-    memcpy(registry_owned, owned, sizeof(owned));
-    nregistry = count;
-    ok = 1;
-done:
-    if (!ok) provider_free(next, owned, count);
-    jfree(&j);
-    return ok;
-}
-#ifndef BROKIE_PROVIDERS_URL
-#define BROKIE_PROVIDERS_URL "https://raw.githubusercontent.com/ykahalan/brokie/main/providers.json"
-#endif
-static void provider_refresh(int force) {
-    provider_defaults();
-    Buf cached = read_file("providers.json");
-    if (cached.p) provider_load(&cached);
-    drop(&cached);
-    if (offline() || (!force && cache_age("providers.json") < 86400)) return;
-    Key anonymous = {.anonymous = 1};
-    Upstream up = {.timeout = 10000};
-    if (fetch(&anonymous, BROKIE_PROVIDERS_URL, NULL, 0, &up) && up.status == 200 && up.body.p &&
-        provider_load(&up.body)) {
-        if (!private_directory() || !write_file("providers.json", up.body.p, up.body.n))
-            fprintf(stderr, "vibe-gateway: could not cache provider directory\n");
-    } else fprintf(stderr, "vibe-gateway: provider refresh failed; keeping cached/bundled defaults\n");
-    drop(&up.body);
 }
 static const char *key_probe(Key *key) {
     if (key->health_path[0]) return key->health_path;
@@ -2271,41 +2096,22 @@ static void print_health(void) {
                keys[i].enabled ? health_names[keys[i].health] : "disabled", keys[i].http, keys[i].checked);
 }
 static void provider_list(void) {
-    provider_refresh(0);
-    Buf catalog = read_file("catalog.json"), cfg = read_file("config.json");
-    Json cat = catalog.p ? json(catalog.p, catalog.n) : (Json){0};
+    Buf cfg = read_file("config.json");
     Json local = cfg.p ? json(cfg.p, cfg.n) : (Json){0};
-    int platforms = catalog.p && !cat.bad ? get(&cat, 0, "platforms") : -1;
     int keys = cfg.p && !local.bad ? get(&local, 0, "keys") : -1;
-    puts("PROVIDER         KEY       CATALOG  MODE     SIGN UP / GET KEY; API BASE");
-    for (int i = 0; i < nregistry; i++) {
-        const Provider *p = &registry[i];
-        int configured = 0, synced = 0;
+    puts("PROVIDER      KEY    MODE  SIGN UP / GET KEY; API BASE");
+    for (size_t i = 0; i < sizeof(providers) / sizeof(*providers); i++) {
+        const Provider *p = &providers[i];
+        int configured = 0;
         for (int q = 0; keys >= 0 && q < local.t[keys].n; q++) {
             int row = at(&local, keys, q);
             configured |=
                 eq(&local, get(&local, row, "provider"), p->id) && boolean(&local, get(&local, row, "enabled"), 1);
         }
-        for (int q = 0; platforms >= 0 && q < cat.t[platforms].n; q++)
-            synced |= eq(&cat, get(&cat, at(&cat, platforms, q), "id"), p->id);
-        printf("%-16s %-9s %-8s %-8s %s\n    %s\n", p->id,
-               configured     ? "added"
-               : p->anonymous ? "optional"
-                              : "needed",
-               synced ? "synced" : "-", p->native ? "native" : "chat", p->signup, p->url);
+        printf("%-13s %-6s %-5s %s\n    %s\n", p->id, configured ? "added" : "needed", "chat", p->signup, p->url);
     }
-    for (int q = 0; platforms >= 0 && q < cat.t[platforms].n; q++) {
-        int row = at(&cat, platforms, q);
-        char id[96], name[160];
-        fieldstr(&cat, row, "id", id, sizeof(id));
-        fieldstr(&cat, row, "name", name, sizeof(name));
-        if (!provider_find(id))
-            printf("%-16s new catalog provider: %s; add its documented BASE_URL manually\n", id, name);
-    }
-    puts("Add: vibe key add PROVIDER [--anonymous]. Native: /native/PROVIDER/PATH. Details: PROVIDERS.md");
-    jfree(&cat);
+    puts("Add: vibe key add mistral-vibe --env MISTRAL_API_KEY. Native: /native/mistral-vibe/PATH.");
     jfree(&local);
-    drop(&catalog);
     drop(&cfg);
 }
 static void usage_stats(void) {
@@ -2409,221 +2215,10 @@ static void launch_client(const char *client, const char *mode, int extra_count,
     execvp(client, args);
     die("could not launch client; ensure it is installed and the server is running");
 }
-#ifndef BROKIE_CATALOG_URL
-#define BROKIE_CATALOG_URL "https://api.freellmapi.co/v1/latest"
-#endif
-#ifndef BROKIE_CATALOG_KEY
-#define BROKIE_CATALOG_KEY                                                                                             \
-    "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAq9yv4+3EeyMHKsfVYBhkcz1lYgIXSUeHNnN6tNgYX3k=\n-----END PUBLIC KEY-----\n"
-#endif
-static const char catalog_pubkey[] = BROKIE_CATALOG_KEY;
-static int verify_catalog(Upstream *up) {
-    unsigned char sig[192];
-    int n = (int)strlen(up->signature);
-    if (!n || n % 4 || n > 200) return 0;
-    int bytes = EVP_DecodeBlock(sig, (unsigned char *)up->signature, n);
-    while (n && up->signature[n - 1] == '=') {
-        bytes--;
-        n--;
-    }
-    if (bytes != 64) return 0;
-    BIO *bio = BIO_new_mem_buf(catalog_pubkey, -1);
-    EVP_PKEY *key = bio ? PEM_read_bio_PUBKEY(bio, NULL, NULL, NULL) : NULL;
-    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
-    int ok = key && ctx && EVP_DigestVerifyInit(ctx, NULL, NULL, NULL, key) == 1 &&
-             EVP_DigestVerify(ctx, sig, (size_t)bytes, (unsigned char *)up->body.p, up->body.n) == 1;
-    EVP_MD_CTX_free(ctx);
-    EVP_PKEY_free(key);
-    BIO_free(bio);
-    return ok;
-}
-static void catalog_row(Buf *b, Json *remote, int r, Json *local, int old, int id) {
-    int limits = get(remote, r, "limits");
-    fmt(b, "{\"id\":%d,\"provider\":", id);
-    raw(b, remote, get(remote, r, "platform"), "\"\"");
-    put(b, ",\"model\":");
-    raw(b, remote, get(remote, r, "modelId"), "\"\"");
-    int enabled =
-        boolean(remote, get(remote, r, "enabled"), 1) && boolean(local, old >= 0 ? get(local, old, "enabled") : -1, 1);
-    fmt(b, ",\"enabled\":%s,\"source\":\"catalog\"", enabled ? "true" : "false");
-    const char *dst[] = {"tools", "vision", "context", "rank", "rpm", "rpd", "tpm", "tpd"},
-               *src[] = {
-                   "supportsTools", "supportsVision", "contextWindow", "intelligenceRank", "rpm", "rpd", "tpm", "tpd"};
-    for (int i = 0; i < 8; i++) {
-        put(b, ",");
-        quote(b, dst[i]);
-        put(b, ":");
-        int val = get(remote, i >= 4 ? limits : r, src[i]);
-        int overrides = old >= 0 ? get(local, old, "overrides") : -1, keep = 0;
-        for (int q = 0; overrides >= 0 && q < local->t[overrides].n; q++)
-            if (eq(local, at(local, overrides, q), dst[i])) keep = 1;
-        if (keep) raw(b, local, get(local, old, dst[i]), i < 2 ? "false" : "0");
-        else raw(b, remote, val, i < 2 ? "false" : i == 3 ? "50" : "0");
-    }
-    int tier = get(remote, r, "sizeLabel"), tv = eq(remote, tier, "Frontier") ? 4
-                                                 : eq(remote, tier, "Large")  ? 3
-                                                 : eq(remote, tier, "Small")  ? 1
-                                                                              : 2;
-    fmt(b, ",\"tier\":%d", tv);
-    char *budget_label = string(remote, get(remote, r, "monthlyTokenBudget"));
-    char *start = budget_label;
-    while (*start && !isdigit((unsigned char)*start)) start++;
-    char *end = start;
-    double budget = strtod(start, &end);
-    while (*end == ' ') end++;
-    int suffix = toupper((unsigned char)*end);
-    budget *= suffix == 'B' ? 1e9 : suffix == 'M' ? 1e6 : suffix == 'K' ? 1e3 : 1;
-    fmt(b, ",\"budget\":%.9g", budget);
-    free(budget_label);
-    if (old >= 0) {
-        int o = get(local, old, "overrides");
-        if (o >= 0) {
-            put(b, ",\"overrides\":");
-            raw(b, local, o, "[]");
-        }
-    }
-    put(b, "}");
-}
-/* Stage and validate a complete update before changing files or live routing state. */
-static int sync_catalog(int live) {
-    if (offline()) return 0;
-    Key key = {.anonymous = !catalog_license[0]};
-    snprintf(key.secret, sizeof(key.secret), "%s", catalog_license);
-    Upstream up = {.timeout = 10000};
-    int fetched = fetch(&key, BROKIE_CATALOG_URL, NULL, 0, &up);
-    secure_zero(key.secret, sizeof(key.secret));
-    Buf current = {0}, rows = {0}, next = {0}, version_json = {0};
-    Json remote = {0}, local = {0};
-    Model *next_models = NULL;
-    Stats *next_stats = NULL;
-    int ok = 0, count = 0, next_id = 1, gated = 0;
-    if (!fetched || up.status != 200 || !up.body.p || !verify_catalog(&up)) goto done;
-    remote = json(up.body.p, up.body.n);
-    current = read_file("config.json");
-    local = json(current.p, current.n);
-    next_models = mem(MAX_MODELS * sizeof(Model));
-    if (remote.bad || !remote.n || remote.t[0].type != '{' || !parse_models(&local, next_models, &count)) goto done;
-    for (int i = 0; i < count; i++)
-        if (next_models[i].id >= next_id) {
-            if (next_models[i].id >= 2147483647) goto done;
-            next_id = next_models[i].id + 1;
-        }
-    int arr = get(&remote, 0, "models"), oldarr = get(&local, 0, "models");
-    char version[128], applied[128];
-    fieldstr(&remote, 0, "version", version, sizeof(version));
-    fieldstr(&local, 0, "catalog_version", applied, sizeof(applied));
-    if (arr < 0 || remote.t[arr].type != '[' || !version[0] || (applied[0] && strcmp(version, applied) < 0)) goto done;
-    put(&rows, "[");
-    count = 0;
-    for (int i = 0; i < remote.t[arr].n; i++) {
-        int r = at(&remote, arr, i), modality = get(&remote, r, "modality");
-        if (modality >= 0 && !eq(&remote, modality, "text")) continue;
-        char provider[96], name[320];
-        fieldstr(&remote, r, "platform", provider, sizeof(provider));
-        fieldstr(&remote, r, "modelId", name, sizeof(name));
-        if (!provider[0] || !name[0]) goto done;
-        double enabled = fieldnum(&remote, r, "enabled", 0);
-        if (!isfinite(enabled) || fabs(enabled) > 2147483647.) goto done;
-        int old = -1, id = next_id;
-        for (int q = 0; oldarr >= 0 && q < local.t[oldarr].n; q++) {
-            int row = at(&local, oldarr, q);
-            if (eq(&local, get(&local, row, "provider"), provider) && eq(&local, get(&local, row, "model"), name)) {
-                old = row;
-                id = (int)fieldnum(&local, row, "id", id);
-                break;
-            }
-        }
-        if (old >= 0 && !eq(&local, get(&local, old, "source"), "catalog")) continue;
-        if (old < 0) {
-            if (next_id >= 2147483647) goto done;
-            next_id++;
-        }
-        if (count++) put(&rows, ",");
-        catalog_row(&rows, &remote, r, &local, old, id);
-    }
-    for (int q = 0; oldarr >= 0 && q < local.t[oldarr].n; q++) {
-        int row = at(&local, oldarr, q);
-        if (!eq(&local, get(&local, row, "source"), "catalog")) {
-            if (count++) put(&rows, ",");
-            raw(&rows, &local, row, "{}");
-        }
-    }
-    if (count > MAX_MODELS) goto done;
-    put(&rows, "]");
-    Buf updated = replace_property(&current, "models", &rows);
-    quote(&version_json, version);
-    next = replace_property(&updated, "catalog_version", &version_json);
-    drop(&updated);
-    Json parsed = json(next.p, next.n);
-    int valid = parse_models(&parsed, next_models, &count);
-    jfree(&parsed);
-    if (!valid) goto done;
-    if (live) {
-        next_stats = mem((size_t)(nk ? nk : 1) * (count ? count : 1) * sizeof(Stats));
-        LOCK();
-        gated = updating = 1;
-        while (active_clients) pthread_cond_wait(&idle, &mutex);
-    }
-    Buf latest = read_file("config.json");
-    int unchanged = latest.n == current.n && latest.p && !memcmp(latest.p, current.p, current.n);
-    drop(&latest);
-    if (!unchanged || !write_file("config.json", next.p, next.n)) goto done;
-    if (live) {
-        for (int m = 0; m < count; m++) {
-            int old = model_index(next_models[m].id);
-            if (old >= 0) memcpy(next_stats + (size_t)m * nk, st(old, 0), (size_t)nk * sizeof(Stats));
-        }
-        for (int q = 0; q < 128; q++)
-            if (sticky[q].hash) {
-                int found = -1;
-                for (int m = 0; m < count; m++)
-                    if (models[sticky[q].model].id == next_models[m].id) found = m;
-                if (found < 0) sticky[q].hash = 0;
-                else sticky[q].model = found;
-            }
-        memcpy(models, next_models, (size_t)count * sizeof(Model));
-        nm = count;
-        free(stats);
-        stats = next_stats;
-        next_stats = NULL;
-        drop(&config);
-        config = next;
-        memset(&next, 0, sizeof(next));
-    }
-    if (!write_file("catalog.json", up.body.p, up.body.n)) fprintf(stderr, "vibe-gateway: catalog cache write failed\n");
-    fprintf(stderr, "Applied signed catalog %s (%d chat models)%s.\n", version, count, live ? " to live router" : "");
-    ok = 1;
-done:
-    if (gated) {
-        updating = 0;
-        pthread_cond_broadcast(&idle);
-        UNLOCK();
-    }
-    if (!ok) fprintf(stderr, "vibe-gateway: catalog refresh failed; keeping existing routing data\n");
-    free(next_models);
-    free(next_stats);
-    jfree(&remote);
-    jfree(&local);
-    drop(&current);
-    drop(&rows);
-    drop(&next);
-    drop(&version_json);
-    drop(&up.body);
-    return ok;
-}
 static void *automatic_refresh(void *unused) {
     (void)unused;
-    double next_catalog = 0, next_providers = 0, next_health = 0;
+    double next_health = 0;
     for (;;) {
-        double now = now_s();
-        if (now >= next_providers) {
-            provider_refresh(0);
-            next_providers = now_s() + 3600;
-        }
-        if (refresh_seconds && nm && now >= next_catalog) {
-            int ok = sync_catalog(1);
-            next_catalog = now_s() + (ok ? refresh_seconds : fmin(300, refresh_seconds));
-        }
         if (health_seconds && now_s() >= next_health) {
             check_keys(0);
             next_health = now_s() + fmin(60, health_seconds);
@@ -2643,8 +2238,7 @@ int main(int argc, char **argv) {
     if (p >= argc) {
         puts(
             "vibe [--dir DIR] init | providers | stats | health | check | serve | list [MODE] | mode MODE | key add PROVIDER [BASE_URL] "
-            "[--anonymous] [--native] [--env VAR] | model add PROVIDER MODEL | sync | license | claude [MODE] "
-            "| run CLIENT [MODE]");
+            "[--env VAR] | model add PROVIDER MODEL | claude [MODE] | run CLIENT [MODE]");
         return 0;
     }
     const char *cmd = argv[p++];
@@ -2662,7 +2256,6 @@ int main(int argc, char **argv) {
     else if (!strcmp(cmd, "stats")) usage_stats();
     else if (!strcmp(cmd, "health")) print_health();
     else if (!strcmp(cmd, "check")) {
-        provider_refresh(0);
         check_keys(1);
         print_health();
     } else if (!strcmp(cmd, "list")) list_routes(p < argc ? argv[p] : default_mode);
@@ -2674,7 +2267,7 @@ int main(int argc, char **argv) {
         drop(&b);
         puts("Default mode saved; restart the server to apply it.");
     } else if (!strcmp(cmd, "key") && p + 1 < argc && !strcmp(argv[p], "add")) {
-        provider_refresh(0);
+        if (strcmp(argv[p + 1], "mistral-vibe")) die("this gateway only serves the mistral-vibe provider");
         const Provider *preset = provider_find(argv[p + 1]);
         int next = p + 2, anonymous = 0, native = preset && preset->native;
         const char *base = next < argc && strncmp(argv[next], "--", 2) ? argv[next++] : preset ? preset->url : NULL;
@@ -2697,16 +2290,7 @@ int main(int argc, char **argv) {
         }
         add_key(argv[p + 1], base, anonymous, native, from_env);
     } else if (!strcmp(cmd, "model") && p + 2 < argc && !strcmp(argv[p], "add")) add_model(argv[p + 1], argv[p + 2]);
-    else if (!strcmp(cmd, "sync")) {
-        provider_refresh(1);
-        if (!sync_catalog(0)) die("catalog sync failed");
-    } else if (!strcmp(cmd, "license")) {
-        char value[4096];
-        if (!hidden_input("Catalog license (hidden): ", value, sizeof(value))) die("license required");
-        write_vault_property("catalog_license", value, 0);
-        secure_zero(value, sizeof(value));
-        puts("Catalog license saved.");
-    } else if (!strcmp(cmd, "claude"))
+    else if (!strcmp(cmd, "claude"))
         launch_client("claude", p < argc ? argv[p] : default_mode, p < argc ? argc - p - 1 : 0, argv + p + 1);
     else if (!strcmp(cmd, "run") && p < argc)
         launch_client(argv[p], p + 1 < argc ? argv[p + 1] : default_mode, p + 2 < argc ? argc - p - 2 : 0,
@@ -2714,7 +2298,6 @@ int main(int argc, char **argv) {
     else die("unknown or incomplete command; run vibe without arguments for usage");
     secure_zero(keys, sizeof(keys));
     secure_zero(auth_token, sizeof(auth_token));
-    secure_zero(catalog_license, sizeof(catalog_license));
     free(stats);
     drop(&config);
     curl_global_cleanup();

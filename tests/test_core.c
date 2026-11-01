@@ -52,18 +52,9 @@ int main(void) {
             die("model enable flags or removed profile guard failed");
         jfree(&cfg);
     }
-    Buf directory = {0};
-    put(&directory,
-        "{\"providers\":[{\"id\":\"electronhub\",\"url\":\"https://example.test/v1\",\"signup\":\"https://example.test\"}]}");
-    if (!provider_load(&directory)) die("provider metadata load failed");
-    snprintf(key.provider, sizeof(key.provider), "electronhub");
-    if (strcmp(key_probe(&key), "/user/me")) die("bundled safe probe lost during metadata overlay");
-    drop(&directory);
-    put(&directory,
-        "{\"providers\":[{\"id\":\"partial\",\"url\":\"https://example.test\",\"signup\":\"https://example.test\"},{\"id\":\"bad\",\"url\":\"http://unsafe.test\"}]}");
-    if (provider_load(&directory) || provider_find("partial") || strcmp(key_probe(&key), "/user/me"))
-        die("failed metadata update replaced working probes");
-    drop(&directory);
+    snprintf(key.provider, sizeof(key.provider), "mistral-vibe");
+    if (strcmp(key_probe(&key), "/models")) die("mistral-vibe probe missing");
+    if (provider_find("other")) die("unknown provider should not resolve");
     puts("Core parser, scoring and health tests passed.");
     return 0;
 }

@@ -186,10 +186,15 @@ def main():
         def cli(*args, input=None, check_code=True):
             return subprocess.run([str(BINARY), '--dir', tmp, *args], env=env, input=input, capture_output=True, text=True, check=check_code)
         cli('init')
-        cli('key', 'add', 'local', 'http://127.0.0.1:9999/v1', input='fixture-provider-secret\n')
-        cli('model', 'add', 'local', 'fixture-model')
+        cli('key', 'add', 'mistral-vibe', input='fixture-provider-secret\n')
         cfg = json.loads((Path(tmp) / 'config.json').read_text())
-        check('from-scratch setup', len(cfg['keys']) == 1 and len(cfg['models']) == 7 and cfg['models'][0]['model'] == 'mistral-vibe-cli-latest')
+        check('from-scratch setup', len(cfg['keys']) == 1 and len(cfg["models"]) == 6 and cfg['models'][0]['model'] == 'mistral-vibe-cli-latest')
+        try:
+            cli('key', 'add', 'not-allowed')
+            raise SystemExit('key add should reject other providers')
+        except subprocess.CalledProcessError:
+            pass
+        check('key add locked to mistral-vibe', True)
         keyfile = Path(tmp) / 'vault.json'
         check('key file owner-only', oct(keyfile.stat().st_mode & 0o777) in ('0o600', '600'))
         check('credentials not in config', 'fixture-provider-secret' not in json.dumps(cfg))

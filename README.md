@@ -2,10 +2,11 @@
 
 **Your Vibe credits. Any OpenAI client.**
 
-One C file: encrypted keys, streaming, and a local OpenAI-compatible gateway to
-Mistral's hosted API using the same credential the Vibe CLI creates. Fork of
-[Brokie](https://github.com/ykahalan/brokie) with the multi-provider router
-retained but preset for a single Vibe route. Linux, macOS, and Windows through WSL.
+One C file: streaming, and a local OpenAI-compatible gateway to Mistral's hosted
+API using the same credential the Vibe CLI creates. Fork of
+[Brokie](https://github.com/ykahalan/brokie) reduced to a single Vibe route:
+no provider directory, no third-party model catalog, no passphrase. Linux,
+macOS, and Windows through WSL.
 
 ## Build and start
 
@@ -36,10 +37,12 @@ State lives in `~/.vibe-gateway`; nothing is sent anywhere except
 
 ## Use
 
-The server listens on `http://127.0.0.1:8787/v1` (loopback only). Default model:
-`mistral-vibe-cli-latest`; bare model IDs and `mistral-vibe/mistral-vibe-cli-latest`
-both route to it. `auto:MODE` aliases exist for routing compatibility but resolve to
-the same single model.
+The server listens on `http://127.0.0.1:8787/v1` (loopback only). Six routes ship
+enabled: `mistral-vibe-cli-latest` (default), `mistral-vibe-cli-fast`,
+`mistral-vibe-cli-with-tools`, `mistral-medium-latest`, `mistral-large-latest` and
+`codestral-latest`. Bare model IDs and `mistral-vibe/<model>` both route; `auto:MODE`
+aliases route among them. `vibe model add mistral-vibe MODEL` adds more from the
+Vibe credential's catalog.
 
 ```sh
 ./vibe claude            # launch Claude Code against the gateway
@@ -96,9 +99,10 @@ Source pointers:
 - No entitlement expansion: usage counts against the same account quota the Vibe CLI
   uses. Check billing in the Mistral console. Review Mistral's terms before using
   subscription-provisioned credentials outside supported clients.
-- The multi-provider catalog endpoints inherited from Brokie still work
-  (`providers`, `sync`, `check`, `/native/PROVIDER/PATH`) but only the
-  `mistral-vibe` route is configured by default.
+- Only `mistral-vibe` is served: `key add` rejects other providers, and the
+  community model catalog and provider directory from Brokie were removed.
+  `check` verifies the Vibe credential; `/native/mistral-vibe/PATH` reaches
+  native Mistral endpoints with the same credential.
 
 ## Credits
 

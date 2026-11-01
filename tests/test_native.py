@@ -45,7 +45,7 @@ def main():
         folder, gateway = Path(tmp), port()
         names = ['exa', 'parallel', 'keenable', 'brave', 'google', 'speechify', 'mock', 'aihorde', 'pinecone', 'compat']
         password = vault(folder, {str(i + 1): 'fixture-native-secret' for i in range(len(names) + 1)})
-        env = dict(os.environ, VIBE_GATEWAY_PASSWORD=password, VIBE_GATEWAY_OFFLINE='1')
+        env = dict(os.environ, VIBE_GATEWAY_PASSWORD=password, VIBE_GATEWAY_OFFLINE='1', VIBE_FIXTURE_KEY='fixture-env-key')
         (folder / 'providers.json').write_bytes((Path(__file__).resolve().parents[1] / 'providers.json').read_bytes())
         def cli(*args, input=None, metadata_only=False):
             child_env = dict(env)
@@ -53,10 +53,7 @@ def main():
             return subprocess.run([str(BINARY), '--dir', tmp, *args], input=input, text=True,
                                   capture_output=True, check=True, env=child_env, timeout=10)
         directory = cli('providers', metadata_only=True).stdout
-        check('provider directory before init', 'https://console.groq.com/keys' in directory)
-        documented = set(re.findall(r'^\| `([^`]+)`', (Path(__file__).resolve().parents[1] / 'PROVIDERS.md').read_text(encoding='utf-8'), re.M))
-        listed_ids = set(re.findall(r'^(\w+)\s+(?:added|needed|optional)\s', directory, re.M))
-        check('all provider presets match documented sources', documented <= listed_ids and len(documented) >= 78)
+        check('single vibe provider listed', 'https://console.mistral.ai/api-keys/' in directory and 'mistral-vibe' in directory)
         cfg = {'port': gateway, 'keys': [
             {'id': i + 1, 'provider': name, 'url': f'http://127.0.0.1:{upstream.server_port}/api' + ('/chat/completions' if name == 'compat' else ''),
              'native': name != 'compat', 'anonymous': name == 'aihorde'} for i, name in enumerate(names)],
@@ -64,10 +61,8 @@ def main():
             'custom': {'nested': [True, 42, {'escaped': 'preserve me'}]}}
         cfg['keys'].append({'id': len(names) + 1, 'provider': 'mock', 'url': f'http://127.0.0.1:{upstream.server_port}/other', 'native': True})
         (folder / 'config.json').write_text(json.dumps(cfg))
-        (folder / 'catalog.json').write_text(json.dumps({'platforms': [{'id': 'exa'}, {'id': 'brand-new', 'name': 'New Provider'}]}))
         listed = cli('providers', metadata_only=True).stdout
-        check('synced provider and configured key shown', 'added' in next(x for x in listed.splitlines() if x.startswith('exa ')) and 'synced' in next(x for x in listed.splitlines() if x.startswith('exa ')))
-        check('new catalog-only provider remains visible', 'brand-new' in listed)
+        check('vibe provider always listed', any(x.startswith('mistral-vibe ') for x in listed.splitlines()))
         cli('mode', 'reliable')
         check('config edits preserve unknown nested fields', json.loads((folder / 'config.json').read_text())['custom'] == cfg['custom'])
         proc = subprocess.Popen([str(BINARY), '--dir', tmp, 'serve'], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -129,16 +124,12 @@ def main():
         finally:
             proc.terminate()
             proc.wait(timeout=5)
-        cli('key', 'add', 'groq', input='fixture-added-key\n')
+        cli('key', 'add', 'mistral-vibe', input='fixture-added-key\n')
         current = json.loads((folder / 'config.json').read_text())
-        check('provider base URL default', current['keys'][-1]['url'] == 'https://api.groq.com/openai/v1/chat/completions')
-        cli('key', 'add', 'tavily', input='fixture-search-key\n')
+        check('provider base URL default', current['keys'][-1]['url'] == 'https://api.mistral.ai/v1/chat/completions')
+        cli('key', 'add', 'mistral-vibe', '--env', 'VIBE_FIXTURE_KEY')
         current = json.loads((folder / 'config.json').read_text())
-        check('search preset uses native API base', current['keys'][-1]['url'] == 'https://api.tavily.com' and current['keys'][-1]['native'])
-        account = '0123456789abcdef0123456789abcdef'
-        cli('key', 'add', 'cloudflare', input=account + '\nfixture-cloud-token\n')
-        current = json.loads((folder / 'config.json').read_text())
-        check('Cloudflare account ID expands endpoint', current['keys'][-1]['url'] == f'https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1/chat/completions')
+        check('env key import', current['keys'][-1]['url'] == 'https://api.mistral.ai/v1/chat/completions')
         now = time.time()
         utc = time.gmtime(now)
         (folder / 'stats.json').write_text(json.dumps([{'model': 1, 'key': 1, 'updated': now,
